@@ -143,10 +143,30 @@ int redirect_service(struct __sk_buff *skb) {
                 u64 now = bpf_ktime_get_ns();
                 if (now - (*pre_time) > expiration) {
                     bpf_trace_printk("Need update\\n");
-                    if (key.port % 2 == 0) {
-                        new_dst_ip = bpf_htonl(serverPod1IP);
-                    } else {
-                        new_dst_ip = bpf_htonl(serverPod2IP);
+                    u32 pod_select_key = 0;
+                    u32 *pod_index = rr_index.lookup(&pod_select_key);
+                    if (pod_index) {
+                        if (*pod_index == 0) {
+                            u32 key0 = 0;
+                            u32 *ip0 = server_pod.lookup(&key0);
+                            if (ip0) {
+                                new_dst_ip = bpf_htonl(*ip0);
+                            }
+                        } else if (*pod_index == 1) {
+                            u32 key1 = 1;
+                            u32 *ip1 = server_pod.lookup(&key1);
+                            if (ip1) {
+                                new_dst_ip = bpf_htonl(*ip1);
+                            }
+                        } else if (*pod_index == 2) {
+                            u32 key2 = 2;
+                            u32 *ip2 = server_pod.lookup(&key2);
+                            if (ip2) {
+                                new_dst_ip = bpf_htonl(*ip2);
+                            }
+                        }
+                        *pod_index = (*pod_index + 1) % 3;
+                        rr_index.update(&pod_select_key, pod_index);
                     }
                     dnat_map.update(&key, &new_dst_ip);
                     time_dnat.update(&key, &now);
