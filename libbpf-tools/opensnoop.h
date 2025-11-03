@@ -2,8 +2,9 @@
 #ifndef __OPENSNOOP_H
 #define __OPENSNOOP_H
 
+#include "path_helpers.h"
+
 #define TASK_COMM_LEN 16
-#define NAME_MAX 255
 #define INVALID_UID ((uid_t)-1)
 
 struct args_t {
@@ -22,7 +23,7 @@ struct event {
 	__u32 mode;
 	__u64 callers[2];
 	char comm[TASK_COMM_LEN];
-	char fname[NAME_MAX];
+	struct full_path fname;
 };
 
 #endif /* __OPENSNOOP_H */
