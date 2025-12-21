@@ -5,5 +5,5 @@ apt-get update
 apt-get install -y python3-pip
 sudo apt install -y git build-essential libssl-dev
 
-# Install specific version of pyroute2
-pip3 install "pyroute2<0.7.0"
+sudo apt install python3-kubernetes
+sudo apt install python3-pyroute2

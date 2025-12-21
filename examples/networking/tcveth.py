@@ -2,6 +2,7 @@ from bcc import BPF
 from pyroute2 import IPRoute
 import pyroute2
 
+from kube_query import *
 
 bpf_program = """
 #include <uapi/linux/bpf.h>
@@ -259,7 +260,7 @@ def cleanup():
         b.cleanup()
 
     print("[✓] Cleanup done.")
-
+    
 ipr = IPRoute()
 interface = "lxc9923cb187ee9"
 
@@ -290,6 +291,8 @@ except Exception as e:
 # Attach to veth0 using TC
 try:
    b = BPF(text=bpf_program)
+   service_pod_mapping, services, pods = kube_query()
+   print(service_pod_mapping)
    fn = b.load_func("redirect_service", BPF.SCHED_CLS)
    ipr.tc("add-filter", "bpf", idx, ":1", fd=fn.fd, name=fn.name, parent="ffff:fff2", classid=1)
 
