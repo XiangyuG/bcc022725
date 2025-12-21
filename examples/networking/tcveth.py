@@ -25,18 +25,16 @@ bpf_program = """
 struct flow_key {
     u32 src_ip;
     u16 src_port;
-    u16 dst_port;
     u8  proto;
 };
 
 struct flow_val {
     u32 pod_ip;
-    u64 last_seen_ns;
 };
 
 BPF_HASH(dnat_map, struct flow_key, struct flow_val);
 
-static inline int parse_l4(struct __sk_buff *skb, struct iphdr *ip, u16 *src_port, u16 *dst_port) {
+static inline int parse_l4(struct __sk_buff *skb, struct iphdr *ip, u16 *src_port) {
     u8 proto = ip->protocol;
     int l4_offset = sizeof(struct ethhdr) + (ip->ihl * 4);
 
@@ -45,13 +43,11 @@ static inline int parse_l4(struct __sk_buff *skb, struct iphdr *ip, u16 *src_por
         if (bpf_skb_load_bytes(skb, l4_offset, &tcp, sizeof(tcp)) < 0)
             return -1;
         *src_port = tcp.source;
-        *dst_port = tcp.dest;
     } else if (proto == IPPROTO_UDP) {
         struct udphdr udp;
         if (bpf_skb_load_bytes(skb, l4_offset, &udp, sizeof(udp)) < 0)
             return -1;
         *src_port = udp.source;
-        *dst_port = udp.dest;
     } else {
         return -1;
     }
@@ -74,45 +70,46 @@ int redirect_service(struct __sk_buff *skb) {
    if (bpf_skb_load_bytes(skb, ip_offset, &ip, sizeof(ip)) < 0)
        return TC_ACT_OK;
 
-
-    u32 dst_ip = bpf_ntohl(ip.daddr);
+   u32 dst_ip = bpf_ntohl(ip.daddr);
    u32 src_ip = bpf_ntohl(ip.saddr);     
-
-
-
-   struct flow_key key = { .src_ip = 0, .src_port = 0, .dst_port = 0, .proto = 0}; 
-   key.src_ip = src_ip; 
-   key.proto = ip.protocol;
-   u16 dst_port;
-    if (parse_l4(skb, &ip, &key.src_port, &key.dst_port) < 0) {
-        bpf_trace_printk("parse_l4(skb, &ip, &key.src_port, &key.dst_port) < 0\\n");
-        return TC_ACT_OK;
-    }
-    struct flow_val *val = dnat_map.lookup(&key);
-    u32 new_dst_ip;
-    if (val != NULL) {
-        bpf_trace_printk("dnat_map.lookup(&key) == NULL\\n");
-        new_dst_ip = val->pod_ip;     
-    } else {
-        u32 rand_val = bpf_get_prandom_u32() % 10;
-        if (rand_val < 5) {
-            new_dst_ip = bpf_htonl(NEW_DST_IP2);
-            bpf_trace_printk("rand_val < 5 --> NEW_DST_IP2\\n");
-        } else {
-            new_dst_ip = bpf_htonl(NEW_DST_IP);
-            bpf_trace_printk("rand_val >= 5 --> NEW_DST_IP\\n");
-        }
-        struct flow_val new_val = { .pod_ip = new_dst_ip, .last_seen_ns = bpf_ktime_get_ns() };
-        dnat_map.update(&key, &new_val);
-    }
-
-   
-   
-   
-   /* u32 new_dst_ip = bpf_htonl(NEW_DST_IP); */
 
    if (src_ip == SRC_IP) {   
        if (dst_ip == SVCIP) {
+            struct flow_key key = { .src_ip = 0, .src_port = 0, .proto = 0}; 
+            key.src_ip = src_ip; 
+            key.proto = ip.protocol;
+            int l4_offset = sizeof(struct ethhdr) + (ip.ihl * 4);
+            u32 new_dst_ip;
+            if (ip.protocol == IPPROTO_TCP) {
+                struct tcphdr tcp;
+                if (bpf_skb_load_bytes(skb, l4_offset, &tcp, sizeof(tcp)) < 0)
+                    return -1;
+                key.src_port = tcp.source;
+                if (tcp.syn && !tcp.ack) {
+                    u32 rand_val = bpf_get_prandom_u32() % 10;
+                    if (rand_val < 5) {
+                        new_dst_ip = bpf_htonl(NEW_DST_IP2);
+                    } else {
+                        new_dst_ip = bpf_htonl(NEW_DST_IP);
+                    }
+                    struct flow_val new_val = { .pod_ip = new_dst_ip };
+                    dnat_map.update(&key, &new_val);
+                } else {
+                    struct flow_val *val = dnat_map.lookup(&key);
+                    if (val != NULL) {
+                        // Must be true
+                        new_dst_ip = val->pod_ip;     
+                    }
+                    if (tcp.fin || tcp.rst) {
+                        dnat_map.delete(&key);
+                    }
+                }
+            } else if (ip.protocol == IPPROTO_UDP) {
+                struct udphdr udp;
+                if (bpf_skb_load_bytes(skb, l4_offset, &udp, sizeof(udp)) < 0)
+                    return -1;
+                key.src_port = udp.source;
+            }
           
            // Store the updated destination IP in the packet   
            if (bpf_skb_store_bytes(skb, ip_offset + offsetof(struct iphdr, daddr), &new_dst_ip, sizeof(new_dst_ip), 0) < 0) {
@@ -131,7 +128,6 @@ int redirect_service(struct __sk_buff *skb) {
             }
             
            u16 protocol = ip.protocol;
-           int l4_offset = ip_offset + (ip.ihl * 4);  // Compute L4 header offset
            if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP) {
 
 
