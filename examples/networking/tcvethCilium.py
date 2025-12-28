@@ -45,26 +45,6 @@ BPF_TABLE("lru_hash", u16, struct rev_nat_val, rev_nat_map, 65536);
 
 BPF_HASH(backend_set, u32, u8);
 
-static inline int parse_l4(struct __sk_buff *skb, struct iphdr *ip, u16 *src_port) {
-    u8 proto = ip->protocol;
-    int l4_offset = sizeof(struct ethhdr) + (ip->ihl * 4);
-
-    if (proto == IPPROTO_TCP) {
-        struct tcphdr tcp;
-        if (bpf_skb_load_bytes(skb, l4_offset, &tcp, sizeof(tcp)) < 0)
-            return -1;
-        *src_port = tcp.source;
-    } else if (proto == IPPROTO_UDP) {
-        struct udphdr udp;
-        if (bpf_skb_load_bytes(skb, l4_offset, &udp, sizeof(udp)) < 0)
-            return -1;
-        *src_port = udp.source;
-    } else {
-        return -1;
-    }
-    return 0;
-}
-
 int redirect_service(struct __sk_buff *skb) {
     int ifindex = skb->ifindex;
     // bpf_trace_printk("redirect_service tc_ingress on ifindex=%d\\n", ifindex);
