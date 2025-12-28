@@ -21,7 +21,6 @@ bpf_program = """
 #define NEW_DST_IP2 0x0A00012A  // 10.0.1.42
 
 #define IS_PSEUDO 0x10
-#define FLOW_TIMEOUT_NS (120ULL * 1000 * 1000 * 1000)
 
 struct ct_key {
     u32 src_ip;
@@ -87,19 +86,14 @@ int redirect_service(struct __sk_buff *skb) {
    u8 *is_backend = backend_set.lookup(&src_ip);
    int ip_offset = 14;
    struct ct_val *ct = ct_map.lookup(&key);
-   if (ct) {
+   if (is_backend && ct) {
         // bpf_trace_printk("Found CT entry for reply packet\\n");
         u16 rev = ct->rev_nat_index;
         struct rev_nat_val *rev_val = rev_nat_map.lookup(&rev);
         if (rev_val) {
             u32 new_src_ip = bpf_ntohl(rev_val->client_ip); // From pod IP to svc IP
             // Store the updated destination IP in the packet   
-            if (bpf_skb_store_bytes(skb, ip_offset + offsetof(struct iphdr, saddr), &new_src_ip, sizeof(new_src_ip), 0) < 0) {
-                bpf_trace_printk("Failed to modify saddr\\n");
-                bpf_trace_printk("bpf_skb_store_bytes(skb, ip_offset + offsetof(struct iphdr, saddr), &new_src_ip, sizeof(new_src_ip), 0) < 0\\n");   
-                return TC_ACT_SHOT;
-            }
-            
+            ip->saddr = new_src_ip;
             if (bpf_l3_csum_replace(skb, ip_offset + offsetof(struct iphdr, check), old_srcip, new_src_ip, sizeof(new_src_ip)) < 0) {
                 bpf_trace_printk("Failed to update IP l3 checksum\\n");
                 return TC_ACT_SHOT;
@@ -114,6 +108,7 @@ int redirect_service(struct __sk_buff *skb) {
                 int flags = (protocol == IPPROTO_UDP) ? (BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0) : 0;
 
                 // Check packet length
+                /*
                 if (skb->len < l4_offset + csum_offset + 2) {
                     bpf_trace_printk("Packet too short for L4 checksum update\\n");
                     return TC_ACT_SHOT;
@@ -121,7 +116,7 @@ int redirect_service(struct __sk_buff *skb) {
                 if (bpf_skb_pull_data(skb, l4_offset + csum_offset + 2) < 0) {
                     bpf_trace_printk("Failed to pull skb data\\n");
                     return TC_ACT_SHOT;
-                }
+                }*/
                 // Update the L4 checksum
                 flags = flags | 4;
                 int ret = bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_srcip, new_src_ip, IS_PSEUDO | flags);
@@ -137,7 +132,7 @@ int redirect_service(struct __sk_buff *skb) {
     if (dst_ip == SVCIP) {
         // bpf_trace_printk("Service IP matched, processing packet\\n");
         key.src_ip = src_ip; 
-        u32 new_dst_ip;
+        u32 new_dst_ip = 0; // Initialization
         if (key.proto == IPPROTO_TCP) {
             struct tcphdr *tcp = l4; 
             key.src_port = tcp->source;
@@ -177,14 +172,7 @@ int redirect_service(struct __sk_buff *skb) {
                 return TC_ACT_SHOT;
             key.src_port = udp.source;
         }*/
-        
-        // Store the updated destination IP in the packet   
-        if (bpf_skb_store_bytes(skb, ip_offset + offsetof(struct iphdr, daddr), &new_dst_ip, sizeof(new_dst_ip), 0) < 0) {
-            bpf_trace_printk("Failed to modify daddr\\n");
-            bpf_trace_printk("bpf_skb_store_bytes(skb, ip_offset + offsetof(struct iphdr, daddr), &new_dst_ip, sizeof(new_dst_ip), 0) < 0\\n");   
-            return TC_ACT_SHOT;
-        }
-
+        ip->daddr = new_dst_ip;
         if (bpf_l3_csum_replace(skb, ip_offset + offsetof(struct iphdr, check), old_dstip, new_dst_ip, sizeof(new_dst_ip)) < 0) {
             bpf_trace_printk("Failed to update IP checksum\\n");
             return TC_ACT_SHOT;
@@ -204,10 +192,11 @@ int redirect_service(struct __sk_buff *skb) {
                 bpf_trace_printk("Packet too short for L4 checksum update\\n");
                 return TC_ACT_SHOT;
             }
+            /* no need to pull
             if (bpf_skb_pull_data(skb, l4_offset + csum_offset + 2) < 0) {
                 bpf_trace_printk("Failed to pull skb data\\n");
                 return TC_ACT_SHOT;
-            }
+            }*/
             // Update the L4 checksum
             flags = flags | 4;
             int ret = bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_dstip, new_dst_ip, IS_PSEUDO | flags);
