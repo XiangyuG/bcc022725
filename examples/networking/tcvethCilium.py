@@ -16,9 +16,9 @@ bpf_program = """
 
 
 #define SRC_IP 0x0A000194  // 10.0.1.148 (hex representation)
-#define SVCIP 0x0A6B47C0  // 10.107.71.192 (hex representation)
-#define NEW_DST_IP 0x0A00016E  // 10.0.1.110 (hex representation)
-#define NEW_DST_IP2 0x0A00016D  // 10.0.1.109
+#define SVCIP 0x0A696F5D // 10.105.111.93 (hex representation)
+#define NEW_DST_IP 0x0A000132  // 10.0.1.50 (hex representation)
+#define NEW_DST_IP2 0x0A00012A  // 10.0.1.42
 
 #define IS_PSEUDO 0x10
 #define FLOW_TIMEOUT_NS (120ULL * 1000 * 1000 * 1000)
@@ -68,31 +68,34 @@ static inline int parse_l4(struct __sk_buff *skb, struct iphdr *ip, u16 *src_por
 int redirect_service(struct __sk_buff *skb) {
     int ifindex = skb->ifindex;
     bpf_trace_printk("redirect_service tc_ingress on ifindex=%d\\n", ifindex);
-   struct ethhdr eth;
-   struct iphdr ip;
-   int ip_offset = 14;
-    
-   if (bpf_skb_load_bytes(skb, 0, &eth, sizeof(eth)) < 0)
-       return TC_ACT_OK;
 
-
-   if (eth.h_proto != bpf_htons(ETH_P_IP))
-       return TC_ACT_OK;
-
-
-   if (bpf_skb_load_bytes(skb, ip_offset, &ip, sizeof(ip)) < 0)
-       return TC_ACT_OK;
-
-   u32 dst_ip = bpf_ntohl(ip.daddr);
-   u32 src_ip = bpf_ntohl(ip.saddr);     
+   
+   void *data = (void *)(long)skb->data; 
+   void *data_end = (void *)(long)skb->data_end; 
+   struct ethhdr *eth = data; 
+    if ((void *)(eth + 1) > data_end) 
+        return TC_ACT_OK;
+    if (eth->h_proto != bpf_htons(ETH_P_IP)) 
+        return TC_ACT_OK;
+    struct iphdr *ip = data + sizeof(struct ethhdr); 
+    if ((void *)(ip + 1) > data_end) return TC_ACT_OK; 
+    if (ip->ihl < 5) { 
+        bpf_trace_printk("Invalid IP header length: %d\\n", ip->ihl); 
+        return TC_ACT_SHOT; 
+    }
+   u32 old_dstip = ip->daddr;
+   u32 old_srcip = ip->saddr;
+   u8 ip_hl = ip->ihl; // To suppress unused variable warning
+   u32 dst_ip = bpf_ntohl(ip->daddr);
+   u32 src_ip = bpf_ntohl(ip->saddr);     
    
     // Check reply first
    struct ct_key key = { .src_ip = 0, .src_port = 0, .proto = 0};
    key.src_ip = dst_ip;
-   key.proto = ip.protocol;
-   int l4_offset = sizeof(struct ethhdr) + (ip.ihl * 4);
+   key.proto = ip->protocol;
+   int l4_offset = sizeof(struct ethhdr) + (ip->ihl * 4);
    
-   if (ip.protocol == IPPROTO_TCP) {
+   if (ip->protocol == IPPROTO_TCP) {
     struct tcphdr tcp;
     if (bpf_skb_load_bytes(skb, l4_offset, &tcp, sizeof(tcp)) < 0)
         return TC_ACT_SHOT;
@@ -100,9 +103,10 @@ int redirect_service(struct __sk_buff *skb) {
    }
 
    u8 *is_backend = backend_set.lookup(&src_ip);
-   
+   int ip_offset = 14;
    struct ct_val *ct = ct_map.lookup(&key);
    if (ct) {
+        bpf_trace_printk("Found CT entry for reply packet\\n");
         u16 rev = ct->rev_nat_index;
         struct rev_nat_val *rev_val = rev_nat_map.lookup(&rev);
         if (rev_val) {
@@ -114,20 +118,13 @@ int redirect_service(struct __sk_buff *skb) {
                 return TC_ACT_SHOT;
             }
             
-            if (bpf_l3_csum_replace(skb, ip_offset + offsetof(struct iphdr, check), ip.saddr, new_src_ip, sizeof(new_src_ip)) < 0) {
+            if (bpf_l3_csum_replace(skb, ip_offset + offsetof(struct iphdr, check), old_srcip, new_src_ip, sizeof(new_src_ip)) < 0) {
                 bpf_trace_printk("Failed to update IP l3 checksum\\n");
                 return TC_ACT_SHOT;
             }
-            if (ip.ihl < 5) {
-                bpf_trace_printk("Invalid IP header length: %d\\n", ip.ihl);
-                return TC_ACT_SHOT;
-            }
-
             
-            u16 protocol = ip.protocol;
+            u16 protocol = key.proto;
             if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP) {
-                int l4_offset = ip_offset + (ip.ihl * 4);  // Compute L4 header offset
-
 
                 // Determine checksum offset based on protocol
                 int csum_offset = (protocol == IPPROTO_TCP) ? 16 : 6;
@@ -145,7 +142,7 @@ int redirect_service(struct __sk_buff *skb) {
                 }
                 // Update the L4 checksum
                 flags = flags | 4;
-                int ret = bpf_l4_csum_replace(skb, l4_offset + csum_offset, ip.saddr, new_src_ip, IS_PSEUDO | flags);
+                int ret = bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_srcip, new_src_ip, IS_PSEUDO | flags);
                 if (ret < 0) {
                     bpf_trace_printk("Failed to update L4 checksum %d\\n", ret);
                     return TC_ACT_SHOT;
@@ -156,12 +153,12 @@ int redirect_service(struct __sk_buff *skb) {
    }
    
     if (dst_ip == SVCIP) {
+        bpf_trace_printk("Service IP matched, processing packet\\n");
         struct ct_key key = { .src_ip = 0, .src_port = 0, .proto = 0}; 
         key.src_ip = src_ip; 
-        key.proto = ip.protocol;
-        int l4_offset = sizeof(struct ethhdr) + (ip.ihl * 4);
+        key.proto = ip->protocol;
         u32 new_dst_ip;
-        if (ip.protocol == IPPROTO_TCP) {
+        if (key.proto == IPPROTO_TCP) {
             struct tcphdr tcp;
             if (bpf_skb_load_bytes(skb, l4_offset, &tcp, sizeof(tcp)) < 0)
                 return TC_ACT_SHOT;
@@ -190,7 +187,7 @@ int redirect_service(struct __sk_buff *skb) {
             } else {
                 new_dst_ip = ct->backend_ip;
             }
-        } else if (ip.protocol == IPPROTO_UDP) {
+        } else if (key.proto == IPPROTO_UDP) {
             struct udphdr udp;
             if (bpf_skb_load_bytes(skb, l4_offset, &udp, sizeof(udp)) < 0)
                 return TC_ACT_SHOT;
@@ -203,17 +200,13 @@ int redirect_service(struct __sk_buff *skb) {
             bpf_trace_printk("bpf_skb_store_bytes(skb, ip_offset + offsetof(struct iphdr, daddr), &new_dst_ip, sizeof(new_dst_ip), 0) < 0\\n");   
             return TC_ACT_SHOT;
         }
-        
-        if (bpf_l3_csum_replace(skb, ip_offset + offsetof(struct iphdr, check), ip.daddr, new_dst_ip, sizeof(new_dst_ip)) < 0) {
+
+        if (bpf_l3_csum_replace(skb, ip_offset + offsetof(struct iphdr, check), old_dstip, new_dst_ip, sizeof(new_dst_ip)) < 0) {
             bpf_trace_printk("Failed to update IP checksum\\n");
             return TC_ACT_SHOT;
         }
-        if (ip.ihl < 5) {
-            bpf_trace_printk("Invalid IP header length: %d\\n", ip.ihl);
-            return TC_ACT_SHOT;
-        }
-        
-        u16 protocol = ip.protocol;
+
+        u16 protocol = key.proto;
         if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP) {
 
 
@@ -233,13 +226,12 @@ int redirect_service(struct __sk_buff *skb) {
             }
             // Update the L4 checksum
             flags = flags | 4;
-            int ret = bpf_l4_csum_replace(skb, l4_offset + csum_offset, ip.daddr, new_dst_ip, IS_PSEUDO | flags);
+            int ret = bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_dstip, new_dst_ip, IS_PSEUDO | flags);
             if (ret < 0) {
                 bpf_trace_printk("Failed to update L4 checksum %d\\n", ret);
                 return TC_ACT_SHOT;
             }
         }
-        // bpf_trace_printk("Failed to Come here %d\\n", ifindex);
         return TC_ACT_OK;
     }   
    return TC_ACT_OK;
@@ -280,8 +272,8 @@ def cleanup():
     
 ipr = IPRoute()
 interface = "lxc9923cb187ee9"
-interface1 = "lxcb4db85b61ffe"
-interface2 = "lxc1b773a8020e2"
+interface1 = "lxcd4e406e0a80c"
+interface2 = "lxcc1f8888283b7"
 # Ensure the interface exists
 try:
    idx = ipr.link_lookup(ifname=interface)[0]
@@ -306,9 +298,9 @@ try:
     service_pod_mapping, services, pods = kube_query()
     # TODO: Add automatically later
     backend_set = b["backend_set"]
-    backend_set[backend_set.Key(0x0A00016E)] = backend_set.Leaf(1)  # 10.0.1.110
-    backend_set[backend_set.Key(0x0A00016D)] = backend_set.Leaf(1)  # 10.0.1.109
-    
+    backend_set[backend_set.Key(0x0A000132)] = backend_set.Leaf(1)  # 10.0.1.110
+    backend_set[backend_set.Key(0x0A00012A)] = backend_set.Leaf(1)  # 10.0.1.42
+
     print(service_pod_mapping)
     fn = b.load_func("redirect_service", BPF.SCHED_CLS)
     ipr.tc("add-filter", "bpf", idx, ":1", fd=fn.fd, name=fn.name, parent="ffff:fff2", classid=1)
