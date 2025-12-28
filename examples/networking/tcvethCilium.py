@@ -69,14 +69,14 @@ int redirect_service(struct __sk_buff *skb) {
         return TC_ACT_OK;
    u32 old_dstip = ip->daddr;
    u32 old_srcip = ip->saddr;
-   u8 ip_hl = ip->ihl; // To suppress unused variable warning
    u32 dst_ip = bpf_ntohl(ip->daddr);
    u32 src_ip = bpf_ntohl(ip->saddr);     
    
     // Check reply first
    struct ct_key key = { .src_ip = 0, .src_port = 0, .proto = 0};
-   key.src_ip = dst_ip;
    key.proto = ip->protocol;
+
+   key.src_ip = dst_ip;
    int l4_offset = sizeof(struct ethhdr) + (ip->ihl * 4);
    
    if (ip->protocol == IPPROTO_TCP) {
@@ -149,14 +149,19 @@ int redirect_service(struct __sk_buff *skb) {
                             : bpf_htonl(NEW_DST_IP2);
                 u16 rev = bpf_get_prandom_u32();
                 struct ct_val new_ct = {
-                    .backend_ip = backend_ip,
-                    .backend_port = tcp->dest,
-                    .rev_nat_index = rev,
+                    .backend_ip = 0,
+                    .backend_port = 0,
+                    .rev_nat_index = 0,
                 };
+                new_ct.backend_ip = backend_ip;
+                new_ct.backend_port = tcp->dest;
+                new_ct.rev_nat_index = rev;
                 struct rev_nat_val rev_val = {
-                    .client_ip   = dst_ip,
-                    .client_port = tcp->source,
+                    .client_ip   = 0,
+                    .client_port = 0,
                 };
+                rev_val.client_ip = dst_ip;
+                rev_val.client_port = tcp->source;
                 ct_map.update(&key, &new_ct);
                 rev_nat_map.update(&rev, &rev_val);
 
