@@ -67,7 +67,7 @@ static inline int parse_l4(struct __sk_buff *skb, struct iphdr *ip, u16 *src_por
 
 int redirect_service(struct __sk_buff *skb) {
     int ifindex = skb->ifindex;
-    bpf_trace_printk("redirect_service tc_ingress on ifindex=%d\\n", ifindex);
+    // bpf_trace_printk("redirect_service tc_ingress on ifindex=%d\\n", ifindex);
 
    
    void *data = (void *)(long)skb->data; 
@@ -78,11 +78,15 @@ int redirect_service(struct __sk_buff *skb) {
     if (eth->h_proto != bpf_htons(ETH_P_IP)) 
         return TC_ACT_OK;
     struct iphdr *ip = data + sizeof(struct ethhdr); 
-    if ((void *)(ip + 1) > data_end) return TC_ACT_OK; 
+    if ((void *)(ip + 1) > data_end) 
+        return TC_ACT_OK; 
     if (ip->ihl < 5) { 
         bpf_trace_printk("Invalid IP header length: %d\\n", ip->ihl); 
         return TC_ACT_SHOT; 
     }
+    void *l4 = data + sizeof(struct ethhdr) + ip->ihl * 4; 
+    if (l4 + sizeof(struct tcphdr) > data_end) 
+        return TC_ACT_OK;
    u32 old_dstip = ip->daddr;
    u32 old_srcip = ip->saddr;
    u8 ip_hl = ip->ihl; // To suppress unused variable warning
@@ -96,17 +100,15 @@ int redirect_service(struct __sk_buff *skb) {
    int l4_offset = sizeof(struct ethhdr) + (ip->ihl * 4);
    
    if (ip->protocol == IPPROTO_TCP) {
-    struct tcphdr tcp;
-    if (bpf_skb_load_bytes(skb, l4_offset, &tcp, sizeof(tcp)) < 0)
-        return TC_ACT_SHOT;
-    key.src_port = tcp.dest;
+    struct tcphdr *tcp = l4; 
+    key.src_port = tcp->dest;
    }
 
    u8 *is_backend = backend_set.lookup(&src_ip);
    int ip_offset = 14;
    struct ct_val *ct = ct_map.lookup(&key);
    if (ct) {
-        bpf_trace_printk("Found CT entry for reply packet\\n");
+        // bpf_trace_printk("Found CT entry for reply packet\\n");
         u16 rev = ct->rev_nat_index;
         struct rev_nat_val *rev_val = rev_nat_map.lookup(&rev);
         if (rev_val) {
@@ -153,16 +155,12 @@ int redirect_service(struct __sk_buff *skb) {
    }
    
     if (dst_ip == SVCIP) {
-        bpf_trace_printk("Service IP matched, processing packet\\n");
-        struct ct_key key = { .src_ip = 0, .src_port = 0, .proto = 0}; 
+        // bpf_trace_printk("Service IP matched, processing packet\\n");
         key.src_ip = src_ip; 
-        key.proto = ip->protocol;
         u32 new_dst_ip;
         if (key.proto == IPPROTO_TCP) {
-            struct tcphdr tcp;
-            if (bpf_skb_load_bytes(skb, l4_offset, &tcp, sizeof(tcp)) < 0)
-                return TC_ACT_SHOT;
-            key.src_port = tcp.source;
+            struct tcphdr *tcp = l4; 
+            key.src_port = tcp->source;
             // bpf_trace_printk("send tcp.source: %d\\n, tcp.dest: %d\\n", tcp.source, tcp.dest);
             struct ct_val *ct = ct_map.lookup(&key);
             if (ct == NULL) {
@@ -172,12 +170,12 @@ int redirect_service(struct __sk_buff *skb) {
                 u16 rev = bpf_get_prandom_u32();
                 struct ct_val new_ct = {
                     .backend_ip = backend_ip,
-                    .backend_port = tcp.dest,
+                    .backend_port = tcp->dest,
                     .rev_nat_index = rev,
                 };
                 struct rev_nat_val rev_val = {
                     .client_ip   = dst_ip,
-                    .client_port = tcp.source,
+                    .client_port = tcp->source,
                 };
                 ct_map.update(&key, &new_ct);
                 rev_nat_map.update(&rev, &rev_val);
@@ -187,12 +185,13 @@ int redirect_service(struct __sk_buff *skb) {
             } else {
                 new_dst_ip = ct->backend_ip;
             }
-        } else if (key.proto == IPPROTO_UDP) {
+        }
+        /* else if (key.proto == IPPROTO_UDP) {
             struct udphdr udp;
             if (bpf_skb_load_bytes(skb, l4_offset, &udp, sizeof(udp)) < 0)
                 return TC_ACT_SHOT;
             key.src_port = udp.source;
-        }
+        }*/
         
         // Store the updated destination IP in the packet   
         if (bpf_skb_store_bytes(skb, ip_offset + offsetof(struct iphdr, daddr), &new_dst_ip, sizeof(new_dst_ip), 0) < 0) {
