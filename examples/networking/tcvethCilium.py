@@ -98,29 +98,16 @@ int redirect_service(struct __sk_buff *skb) {
             }
             
             u16 protocol = key.proto;
-            if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP) {
-                // Determine checksum offset based on protocol
-                int csum_offset = (protocol == IPPROTO_TCP) ? 16 : 6;
-                // int flags = (protocol == IPPROTO_UDP) ? BPF_F_PSEUDO_HDR : 0;  // UDP needs pseudo-header
-                int flags = (protocol == IPPROTO_UDP) ? (BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0) : 0;
-
-                // Check packet length
-                /*
-                if (skb->len < l4_offset + csum_offset + 2) {
-                    bpf_trace_printk("Packet too short for L4 checksum update\\n");
-                    return TC_ACT_SHOT;
-                }
-                if (bpf_skb_pull_data(skb, l4_offset + csum_offset + 2) < 0) {
-                    bpf_trace_printk("Failed to pull skb data\\n");
-                    return TC_ACT_SHOT;
-                }*/
-                // Update the L4 checksum
+            if (protocol == IPPROTO_TCP) {
+                int csum_offset = 16;
+                int flags = 0;
                 flags = flags | 4;
-                int ret = bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_srcip, new_src_ip, IS_PSEUDO | flags);
-                if (ret < 0) {
-                    bpf_trace_printk("Failed to update L4 checksum %d\\n", ret);
-                    return TC_ACT_SHOT;
-                }
+                bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_srcip, new_src_ip, IS_PSEUDO | flags);
+            } else if (protocol == IPPROTO_UDP) {
+                int csum_offset = 6;
+                int flags = (BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0);
+                flags = flags | 4;
+                bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_srcip, new_src_ip, IS_PSEUDO | flags);
             }
             return TC_ACT_OK;
         }
