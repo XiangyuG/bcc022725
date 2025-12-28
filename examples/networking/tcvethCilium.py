@@ -47,8 +47,6 @@ BPF_HASH(backend_set, u32, u8);
 int redirect_service(struct __sk_buff *skb) {
     int ifindex = skb->ifindex;
     // bpf_trace_printk("redirect_service tc_ingress on ifindex=%d\\n", ifindex);
-
-   
    void *data = (void *)(long)skb->data; 
    void *data_end = (void *)(long)skb->data_end; 
    struct ethhdr *eth = data; 
@@ -101,7 +99,6 @@ int redirect_service(struct __sk_buff *skb) {
             
             u16 protocol = key.proto;
             if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP) {
-
                 // Determine checksum offset based on protocol
                 int csum_offset = (protocol == IPPROTO_TCP) ? 16 : 6;
                 // int flags = (protocol == IPPROTO_UDP) ? BPF_F_PSEUDO_HDR : 0;  // UDP needs pseudo-header
@@ -128,7 +125,6 @@ int redirect_service(struct __sk_buff *skb) {
             return TC_ACT_OK;
         }
    }
-   
     if (dst_ip == SVCIP) {
         // bpf_trace_printk("Service IP matched, processing packet\\n");
         key.src_ip = src_ip; 
@@ -136,10 +132,10 @@ int redirect_service(struct __sk_buff *skb) {
         if (key.proto == IPPROTO_TCP) {
             struct tcphdr *tcp = l4; 
             key.src_port = tcp->source;
-            // bpf_trace_printk("send tcp.source: %d\\n, tcp.dest: %d\\n", tcp.source, tcp.dest);
             struct ct_val *ct = ct_map.lookup(&key);
             if (ct == NULL) {
-                u32 backend_ip = (bpf_get_prandom_u32() & 1)
+                u32 h = src_ip ^ key.src_port;
+                u32 backend_ip = (h & 1)
                             ? bpf_htonl(NEW_DST_IP)
                             : bpf_htonl(NEW_DST_IP2);
                 u16 rev = bpf_get_prandom_u32();
@@ -159,8 +155,6 @@ int redirect_service(struct __sk_buff *skb) {
                 rev_val.client_port = tcp->source;
                 ct_map.update(&key, &new_ct);
                 rev_nat_map.update(&rev, &rev_val);
-
-                ct = &new_ct;
                 new_dst_ip = backend_ip;
             } else {
                 new_dst_ip = ct->backend_ip;
@@ -179,37 +173,20 @@ int redirect_service(struct __sk_buff *skb) {
         }
 
         u16 protocol = key.proto;
-        if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP) {
-
-
-            // Determine checksum offset based on protocol
-            int csum_offset = (protocol == IPPROTO_TCP) ? 16 : 6;
-            // int flags = (protocol == IPPROTO_UDP) ? BPF_F_PSEUDO_HDR : 0;  // UDP needs pseudo-header
-            int flags = (protocol == IPPROTO_UDP) ? (BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0) : 0;
-
-            // Check packet length
-            if (skb->len < l4_offset + csum_offset + 2) {
-                bpf_trace_printk("Packet too short for L4 checksum update\\n");
-                return TC_ACT_SHOT;
-            }
-            /* no need to pull
-            if (bpf_skb_pull_data(skb, l4_offset + csum_offset + 2) < 0) {
-                bpf_trace_printk("Failed to pull skb data\\n");
-                return TC_ACT_SHOT;
-            }*/
-            // Update the L4 checksum
-            flags = flags | 4;
-            int ret = bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_dstip, new_dst_ip, IS_PSEUDO | flags);
-            if (ret < 0) {
-                bpf_trace_printk("Failed to update L4 checksum %d\\n", ret);
-                return TC_ACT_SHOT;
-            }
+        if (protocol == IPPROTO_TCP) {
+            int csum_offset = 16;
+            // TODO: check how to set the value of flags
+            int flags = 0 | 4;
+            bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_dstip, new_dst_ip, IS_PSEUDO | flags);
+        } else if (protocol == IPPROTO_UDP) {
+            int csum_offset = 6;
+            int flags = BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0 | 4;
+            bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_dstip, new_dst_ip, IS_PSEUDO | flags);
         }
         return TC_ACT_OK;
     }   
    return TC_ACT_OK;
 }
-
 """
 
 def cleanup():
@@ -263,7 +240,6 @@ try:
     ipr.tc("add", "clsact", idx2)
 except Exception as e:
     print(f"clsact qdisc already exists: {e}")
-
 
 # Attach to veth0 using TC
 try:
