@@ -44,6 +44,26 @@ BPF_TABLE("lru_hash", u16, struct rev_nat_val, rev_nat_map, 65536);
 
 BPF_HASH(backend_set, u32, u8);
 
+static inline int l4_checksum_update(struct __sk_buff *skb, int ip_offset, int l4_offset, u8 protocol, u32 old_ip, u32 new_ip) {
+    if (protocol == IPPROTO_TCP) {
+        int csum_offset = 16;
+        // TODO: check how to set the value of flags
+        int flags = 0 | 4;
+        int ret = bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_ip, new_ip, IS_PSEUDO | flags);
+        if (ret < 0) {
+            return ret;
+        }
+    } else if (protocol == IPPROTO_UDP) {
+        int csum_offset = 6;
+        int flags = BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0 | 4;
+        int ret = bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_ip, new_ip, IS_PSEUDO | flags);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    return 0;
+}
+
 int redirect_service(struct __sk_buff *skb) {
     int ifindex = skb->ifindex;
     // bpf_trace_printk("redirect_service tc_ingress on ifindex=%d\\n", ifindex);
@@ -98,16 +118,11 @@ int redirect_service(struct __sk_buff *skb) {
             }
             
             u16 protocol = key.proto;
-            if (protocol == IPPROTO_TCP) {
-                int csum_offset = 16;
-                int flags = 0;
-                flags = flags | 4;
-                bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_srcip, new_src_ip, IS_PSEUDO | flags);
-            } else if (protocol == IPPROTO_UDP) {
-                int csum_offset = 6;
-                int flags = (BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0);
-                flags = flags | 4;
-                bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_srcip, new_src_ip, IS_PSEUDO | flags);
+            
+            int ret = l4_checksum_update(skb, ip_offset, l4_offset, protocol, old_srcip, new_src_ip);
+            if (ret < 0) {
+                bpf_trace_printk("l4 csum replace ret=%d\\n", ret);
+                return TC_ACT_SHOT;
             }
             return TC_ACT_OK;
         }
@@ -160,16 +175,11 @@ int redirect_service(struct __sk_buff *skb) {
         }
 
         u16 protocol = key.proto;
-        if (protocol == IPPROTO_TCP) {
-            int csum_offset = 16;
-            // TODO: check how to set the value of flags
-            int flags = 0 | 4;
-            bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_dstip, new_dst_ip, IS_PSEUDO | flags);
-        } else if (protocol == IPPROTO_UDP) {
-            int csum_offset = 6;
-            int flags = BPF_F_PSEUDO_HDR | BPF_F_MARK_MANGLED_0 | 4;
-            bpf_l4_csum_replace(skb, l4_offset + csum_offset, old_dstip, new_dst_ip, IS_PSEUDO | flags);
-        }
+        int ret = l4_checksum_update(skb, ip_offset, l4_offset, protocol, old_dstip, new_dst_ip);
+        if (ret < 0) {
+            bpf_trace_printk("l4 csum replace ret=%d\\n", ret);
+            return TC_ACT_SHOT;
+        }        
         return TC_ACT_OK;
     }   
    return TC_ACT_OK;
