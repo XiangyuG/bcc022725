@@ -84,16 +84,13 @@ int redirect_service(struct __sk_buff *skb) {
     void *l4 = data + sizeof(struct ethhdr) + ip->ihl * 4; 
     if (l4 + sizeof(struct tcphdr) > data_end) 
         return TC_ACT_OK;
-   u32 old_dstip = ip->daddr;
-   u32 old_srcip = ip->saddr;
+   
    u32 dst_ip = ip->daddr;
    u32 src_ip = ip->saddr;     
    
     // Check reply first
    struct ct_key key = { .src_ip = 0, .src_port = 0, .proto = 0};
    key.proto = ip->protocol;
-
-   key.src_ip = dst_ip;
    int l4_offset = sizeof(struct ethhdr) + (ip->ihl * 4);
    
    if (ip->protocol == IPPROTO_TCP) {
@@ -103,31 +100,8 @@ int redirect_service(struct __sk_buff *skb) {
 
    u8 *is_backend = backend_set.lookup(&src_ip);
    int ip_offset = 14;
-   struct ct_val *ct = ct_map.lookup(&key);
-   // if (is_backend && ct) {
-   if (ct) {
-        // bpf_trace_printk("Found CT entry for reply packet\\n");
-        u16 rev = ct->rev_nat_index;
-        struct rev_nat_val *rev_val = rev_nat_map.lookup(&rev);
-        if (rev_val) {
-            u32 new_src_ip = rev_val->client_ip; // From pod IP to svc IP
-            // Store the updated destination IP in the packet   
-            ip->saddr = new_src_ip;
-            if (bpf_l3_csum_replace(skb, ip_offset + offsetof(struct iphdr, check), old_srcip, new_src_ip, sizeof(new_src_ip)) < 0) {
-                bpf_trace_printk("Failed to update IP l3 checksum\\n");
-                return TC_ACT_SHOT;
-            }
-            
-            u16 protocol = key.proto;
-            
-            int ret = l4_checksum_update(skb, ip_offset, l4_offset, protocol, old_srcip, new_src_ip);
-            if (ret < 0) {
-                bpf_trace_printk("l4 csum replace ret=%d\\n", ret);
-                return TC_ACT_SHOT;
-            }
-            return TC_ACT_OK;
-        }
-   }
+   
+
     if (dst_ip == bpf_htonl(SVCIP)) {
         // bpf_trace_printk("Service IP matched, processing packet\\n");
         key.src_ip = src_ip; 
@@ -170,19 +144,47 @@ int redirect_service(struct __sk_buff *skb) {
             key.src_port = udp.source;
         }*/
         ip->daddr = new_dst_ip;
-        if (bpf_l3_csum_replace(skb, ip_offset + offsetof(struct iphdr, check), old_dstip, new_dst_ip, sizeof(new_dst_ip)) < 0) {
+        if (bpf_l3_csum_replace(skb, ip_offset + offsetof(struct iphdr, check), dst_ip, new_dst_ip, sizeof(new_dst_ip)) < 0) {
             bpf_trace_printk("Failed to update IP checksum\\n");
             return TC_ACT_SHOT;
         }
 
         u16 protocol = key.proto;
-        int ret = l4_checksum_update(skb, ip_offset, l4_offset, protocol, old_dstip, new_dst_ip);
+        int ret = l4_checksum_update(skb, ip_offset, l4_offset, protocol, dst_ip, new_dst_ip);
         if (ret < 0) {
             bpf_trace_printk("l4 csum replace ret=%d\\n", ret);
             return TC_ACT_SHOT;
         }        
         return TC_ACT_OK;
     }   
+
+    key.src_ip = dst_ip;
+    struct ct_val *ct = ct_map.lookup(&key);
+   // if (is_backend && ct) {
+   if (ct) {
+        // bpf_trace_printk("Found CT entry for reply packet\\n");
+        u16 rev = ct->rev_nat_index;
+        struct rev_nat_val *rev_val = rev_nat_map.lookup(&rev);
+        if (rev_val) {
+            u32 new_src_ip = rev_val->client_ip; // From pod IP to svc IP
+            // Store the updated destination IP in the packet   
+            ip->saddr = new_src_ip;
+            if (bpf_l3_csum_replace(skb, ip_offset + offsetof(struct iphdr, check), src_ip, new_src_ip, sizeof(new_src_ip)) < 0) {
+                bpf_trace_printk("Failed to update IP l3 checksum\\n");
+                return TC_ACT_SHOT;
+            }
+            
+            u16 protocol = key.proto;
+            
+            int ret = l4_checksum_update(skb, ip_offset, l4_offset, protocol, src_ip, new_src_ip);
+            if (ret < 0) {
+                bpf_trace_printk("l4 csum replace ret=%d\\n", ret);
+                return TC_ACT_SHOT;
+            }
+            return TC_ACT_OK;
+        }
+   }
+    
    return TC_ACT_OK;
 }
 """
