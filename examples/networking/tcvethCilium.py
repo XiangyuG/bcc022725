@@ -15,10 +15,10 @@ bpf_program = """
 #include <linux/tcp.h> // --> struct tcphdr tcp;
 
 
-#define SRC_IP 0x0A000194  // 10.0.1.148 (hex representation)
-#define SVCIP 0x0A696F5D // 10.105.111.93 (hex representation)
-#define NEW_DST_IP 0x0A000132  // 10.0.1.50 (hex representation)
-#define NEW_DST_IP2 0x0A00012A  // 10.0.1.42
+#define SRC_IP 0x0A0001D2  // 10.0.1.210 (hex representation)
+#define SVCIP 0x0A686FCF // 10.104.111.207 (hex representation)
+#define NEW_DST_IP 0x0A00017A  // 10.0.1.122 (hex representation)
+#define NEW_DST_IP2 0x0A000154  // 10.0.1.84
 
 #define IS_PSEUDO 0x10
 
@@ -86,8 +86,8 @@ int redirect_service(struct __sk_buff *skb) {
         return TC_ACT_OK;
    u32 old_dstip = ip->daddr;
    u32 old_srcip = ip->saddr;
-   u32 dst_ip = bpf_ntohl(ip->daddr);
-   u32 src_ip = bpf_ntohl(ip->saddr);     
+   u32 dst_ip = ip->daddr;
+   u32 src_ip = ip->saddr;     
    
     // Check reply first
    struct ct_key key = { .src_ip = 0, .src_port = 0, .proto = 0};
@@ -104,12 +104,13 @@ int redirect_service(struct __sk_buff *skb) {
    u8 *is_backend = backend_set.lookup(&src_ip);
    int ip_offset = 14;
    struct ct_val *ct = ct_map.lookup(&key);
-   if (is_backend && ct) {
+   // if (is_backend && ct) {
+   if (ct) {
         // bpf_trace_printk("Found CT entry for reply packet\\n");
         u16 rev = ct->rev_nat_index;
         struct rev_nat_val *rev_val = rev_nat_map.lookup(&rev);
         if (rev_val) {
-            u32 new_src_ip = bpf_ntohl(rev_val->client_ip); // From pod IP to svc IP
+            u32 new_src_ip = rev_val->client_ip; // From pod IP to svc IP
             // Store the updated destination IP in the packet   
             ip->saddr = new_src_ip;
             if (bpf_l3_csum_replace(skb, ip_offset + offsetof(struct iphdr, check), old_srcip, new_src_ip, sizeof(new_src_ip)) < 0) {
@@ -127,7 +128,7 @@ int redirect_service(struct __sk_buff *skb) {
             return TC_ACT_OK;
         }
    }
-    if (dst_ip == SVCIP) {
+    if (dst_ip == bpf_htonl(SVCIP)) {
         // bpf_trace_printk("Service IP matched, processing packet\\n");
         key.src_ip = src_ip; 
         u32 new_dst_ip = 0; // Initialization
@@ -218,9 +219,9 @@ def cleanup():
     print("[✓] Cleanup done.")
     
 ipr = IPRoute()
-interface = "lxc9923cb187ee9"
-interface1 = "lxcd4e406e0a80c"
-interface2 = "lxcc1f8888283b7"
+interface = "lxcb54b62d61434"
+interface1 = "lxc102115b89e79"
+interface2 = "lxc04e01eda2318"
 # Ensure the interface exists
 try:
    idx = ipr.link_lookup(ifname=interface)[0]
