@@ -106,11 +106,9 @@ int redirect_service(struct __sk_buff *skb) {
             key.src_port = tcp->source;
             struct ct_val *ct = ct_map.lookup(&key);
             if (ct == NULL) {
-                u32 h = src_ip ^ key.src_port;
-                u32 backend_ip = (h & 1)
+                u32 backend_ip = (bpf_get_prandom_u32() & 1)
                             ? bpf_htonl(NEW_DST_IP)
                             : bpf_htonl(NEW_DST_IP2);
-                u16 rev = bpf_get_prandom_u32();
                 struct ct_val new_ct = {
                     .backend_ip = 0,
                     .backend_port = 0,
