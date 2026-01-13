@@ -8,6 +8,34 @@ def ipv4_to_hex(ip: str) -> str:
     value = int(ipaddress.IPv4Address(ip))
     return f"0x{value:08X}"
 
+def apply_config(path: str,
+                 interfaces: list,
+                 src_ip: str,
+                 svcip: str,
+                 new_dst_ip: str,
+                 new_dst_ip2: str):
+    if not path:
+        return interfaces, src_ip, svcip, new_dst_ip, new_dst_ip2
+
+    with open(path, "r") as f:
+        cfg = json.load(f)
+
+    if isinstance(cfg.get("interfaces"), list) and cfg["interfaces"]:
+        interfaces = cfg["interfaces"]
+
+    if isinstance(cfg.get("src_ip"), str) and cfg["src_ip"]:
+        src_ip = cfg["src_ip"]
+
+    if isinstance(cfg.get("svcip"), str) and cfg["svcip"]:
+        svcip = cfg["svcip"]
+
+    dst_list = cfg.get("dst_ip")
+    if isinstance(dst_list, list) and len(dst_list) == 2:
+        new_dst_ip = dst_list[0]
+        new_dst_ip2 = dst_list[1]
+
+    return interfaces, src_ip, svcip, new_dst_ip, new_dst_ip2
+
 def cleanup():
     print("\n[*] Detaching TC and cleaning up...")
 
@@ -51,6 +79,15 @@ src_ip     = "10.0.1.210"
 svcip      = "10.104.111.207"
 new_dst_ip = "10.0.1.122"
 new_dst_ip2= "10.0.1.84"
+
+# if a config file is provided, ignore the upper variables and inject the new ones. Else, the variables wont change.
+parser = argparse.ArgumentParser()
+parser.add_argument("--config", "-c", help="Path to JSON config file", default=None)
+args = parser.parse_args()
+
+interfaces, src_ip, svcip, new_dst_ip, new_dst_ip2 = apply_config(
+    args.config, interfaces, src_ip, svcip, new_dst_ip, new_dst_ip2
+)
 
 cflags = [
     f"-DSRC_IP={ipv4_to_hex(src_ip)}",
