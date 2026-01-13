@@ -1,4 +1,6 @@
 from bcc import BPF
+import argparse
+import ipaddress
 from pyroute2 import IPRoute
 import pyroute2
 
@@ -43,7 +45,7 @@ def cleanup():
 
     try:
         # 删除 ingress filters（两个 parent）
-        for ifname in interfaces.items():
+        for ifname in interfaces:
             ipr.tc("del-filter", "bpf", ifname, ":1", parent="ffff:fff2")
     except Exception:
         pass
@@ -57,7 +59,7 @@ def cleanup():
 
     try:
         # 删除 clsact qdisc
-        for ifname in interfaces.items():
+        for ifname in interfaces:
             ipr.tc("del", "clsact", ifname)
     except Exception:
         pass
@@ -89,6 +91,7 @@ interfaces, src_ip, svcip, new_dst_ip, new_dst_ip2 = apply_config(
     args.config, interfaces, src_ip, svcip, new_dst_ip, new_dst_ip2
 )
 
+interfaces = list(dict.fromkeys(interfaces))
 #inject configuration parameters as cflags in bpf program
 cflags = [
     f"-DSRC_IP={ipv4_to_hex(src_ip)}",
@@ -99,16 +102,17 @@ cflags = [
 
 # Ensure the interface exists
 try:
-    interfaces = list(dict.fromkeys(interfaces))
-    for ifname in interfaces.items():
-        ipr.link_lookup(ifname=ifname)[0]
+    for idx in interfaces:
+        print(idx)
+        print(ipr.link_lookup(ifname=idx))
+        ipr.link_lookup(ifname=idx)[0]
 except IndexError:
-   print(f"Error: Interface {interface} not found. Is it created?")
+   print(f"Error: Interface {interfaces} not found. Is it created?")
    exit(1)
 
 # Ensure clsact qdisc is added only once
 try:
-    for ifname in interfaces.items():
+    for ifname in interfaces:
         ipr.tc("add", "clsact", ifname)
   
 except Exception as e:
@@ -128,7 +132,7 @@ try:
    # backend_set[backend_set.Key(0x0A00012A)] = backend_set.Leaf(1)  # 10.0.1.42
 
     print(service_pod_mapping)
-    for ifname in interfaces.items():
+    for ifname in interfaces:
         fn = b.load_func("redirect_service", BPF.SCHED_CLS)
         ipr.tc("add-filter", "bpf", ifname, ":1", fd=fn.fd, name=fn.name, parent="ffff:fff2", classid=1)
 
