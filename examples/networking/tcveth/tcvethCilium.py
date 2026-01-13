@@ -38,14 +38,17 @@ def cleanup():
     print("[✓] Cleanup done.")
     
 ipr = IPRoute()
-interface = "lxcb54b62d61434"
-interface1 = "lxc102115b89e79"
-interface2 = "lxc04e01eda2318"
+
+interfaces = [
+ "lxcb54b62d61434",
+ "lxc102115b89e79",
+ "lxc04e01eda2318",
+]
 # Ensure the interface exists
 try:
-   idx = ipr.link_lookup(ifname=interface)[0]
-   idx1 = ipr.link_lookup(ifname=interface1)[0]
-   idx2 = ipr.link_lookup(ifname=interface2)[0]
+    interfaces = list(dict.fromkeys(interfaces))
+    for ifname in interfaces.items():
+        ipr.link_lookup(ifname=ifname)[0]
 except IndexError:
    print(f"Error: Interface {interface} not found. Is it created?")
    exit(1)
