@@ -41,9 +41,8 @@ def cleanup():
 
     try:
         # 删除 ingress filters（两个 parent）
-        ipr.tc("del-filter", "bpf", idx, ":1", parent="ffff:fff2")
-        ipr.tc("del-filter", "bpf", idx1, ":1", parent="ffff:fff2")
-        ipr.tc("del-filter", "bpf", idx2, ":1", parent="ffff:fff2")
+        for ifname in interfaces.items():
+            ipr.tc("del-filter", "bpf", ifname, ":1", parent="ffff:fff2")
     except Exception:
         pass
 
@@ -56,9 +55,8 @@ def cleanup():
 
     try:
         # 删除 clsact qdisc
-        ipr.tc("del", "clsact", idx)
-        ipr.tc("del", "clsact", idx1)
-        ipr.tc("del", "clsact", idx2)
+        for ifname in interfaces.items():
+            ipr.tc("del", "clsact", ifname)
     except Exception:
         pass
 
@@ -107,9 +105,9 @@ except IndexError:
 
 # Ensure clsact qdisc is added only once
 try:
-    ipr.tc("add", "clsact", idx)
-    ipr.tc("add", "clsact", idx1)
-    ipr.tc("add", "clsact", idx2)
+    for ifname in interfaces.items():
+        ipr.tc("add", "clsact", ifname)
+  
 except Exception as e:
     print(f"clsact qdisc already exists: {e}")
 
@@ -123,14 +121,10 @@ try:
    # backend_set[backend_set.Key(0x0A00012A)] = backend_set.Leaf(1)  # 10.0.1.42
 
     print(service_pod_mapping)
-    fn = b.load_func("redirect_service", BPF.SCHED_CLS)
-    ipr.tc("add-filter", "bpf", idx, ":1", fd=fn.fd, name=fn.name, parent="ffff:fff2", classid=1)
+    for ifname in interfaces.items():
+        fn = b.load_func("redirect_service", BPF.SCHED_CLS)
+        ipr.tc("add-filter", "bpf", ifname, ":1", fd=fn.fd, name=fn.name, parent="ffff:fff2", classid=1)
 
-    fn = b.load_func("redirect_service", BPF.SCHED_CLS)
-    ipr.tc("add-filter", "bpf", idx1, ":1", fd=fn.fd, name=fn.name, parent="ffff:fff2", classid=1)
-
-    fn = b.load_func("redirect_service", BPF.SCHED_CLS)
-    ipr.tc("add-filter", "bpf", idx2, ":1", fd=fn.fd, name=fn.name, parent="ffff:fff2", classid=1)
 
     print(f"BPF attached to {interface} - SCHED_CLS: OK")
     print("Waiting for packets... Press Ctrl+C to stop.")
