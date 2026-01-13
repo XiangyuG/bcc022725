@@ -8,10 +8,22 @@
 #include <linux/tcp.h> // --> struct tcphdr tcp;
 
 
+#ifndef SRC_IP
 #define SRC_IP 0x0A0001D2  // 10.0.1.210 (hex representation)
+#endif
+
+#ifndef SVCIP
 #define SVCIP 0x0A686FCF // 10.104.111.207 (hex representation)
+#endif
+
+#ifndef NEW_DST_IP
 #define NEW_DST_IP 0x0A00017A  // 10.0.1.122 (hex representation)
+#endif
+
+#ifndef NEW_DST_IP2
 #define NEW_DST_IP2 0x0A000154  // 10.0.1.84
+#endif
+
 
 #define IS_PSEUDO 0x10
 

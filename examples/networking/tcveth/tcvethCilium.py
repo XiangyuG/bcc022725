@@ -4,7 +4,9 @@ import pyroute2
 
 from kube_query import *
 
-
+def ipv4_to_hex(ip: str) -> str:
+    value = int(ipaddress.IPv4Address(ip))
+    return f"0x{value:08X}"
 
 def cleanup():
     print("\n[*] Detaching TC and cleaning up...")
@@ -44,6 +46,19 @@ interfaces = [
  "lxc102115b89e79",
  "lxc04e01eda2318",
 ]
+
+src_ip     = "10.0.1.210"
+svcip      = "10.104.111.207"
+new_dst_ip = "10.0.1.122"
+new_dst_ip2= "10.0.1.84"
+
+cflags = [
+    f"-DSRC_IP={ipv4_to_hex(src_ip)}",
+    f"-DSVCIP={ipv4_to_hex(svcip)}",
+    f"-DNEW_DST_IP={ipv4_to_hex(new_dst_ip)}",
+    f"-DNEW_DST_IP2={ipv4_to_hex(new_dst_ip2)}",
+]
+
 # Ensure the interface exists
 try:
     interfaces = list(dict.fromkeys(interfaces))
@@ -63,7 +78,7 @@ except Exception as e:
 
 # Attach to veth0 using TC
 try:
-    b = BPF(src_file = "tcveth.c", debug=0)
+    b = BPF(src_file = "tcveth.c", cflags=cflags, debug=0)
     service_pod_mapping, services, pods = kube_query()
     # TODO: Add automatically later
    # backend_set = b["backend_set"]
