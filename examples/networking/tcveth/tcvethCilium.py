@@ -4,10 +4,12 @@ import pyroute2
 
 from kube_query import *
 
+# convert ipv4 to hexadecimal, to pass later to bpf program
 def ipv4_to_hex(ip: str) -> str:
     value = int(ipaddress.IPv4Address(ip))
     return f"0x{value:08X}"
 
+#apply configuration, if specified in the --config flag (which is passed as first arg)
 def apply_config(path: str,
                  interfaces: list,
                  src_ip: str,
@@ -87,6 +89,7 @@ interfaces, src_ip, svcip, new_dst_ip, new_dst_ip2 = apply_config(
     args.config, interfaces, src_ip, svcip, new_dst_ip, new_dst_ip2
 )
 
+#inject configuration parameters as cflags in bpf program
 cflags = [
     f"-DSRC_IP={ipv4_to_hex(src_ip)}",
     f"-DSVCIP={ipv4_to_hex(svcip)}",
@@ -113,7 +116,11 @@ except Exception as e:
 
 # Attach to veth0 using TC
 try:
-    b = BPF(src_file = "tcveth.c", cflags=cflags, debug=0)
+
+    # enabled calling the script from outside directory
+    here = os.path.dirname(os.path.abspath(__file__))
+    c_file = os.path.join(here, "tcveth.c")
+    b = BPF(src_file = c_file, cflags=cflags, debug=0)
     service_pod_mapping, services, pods = kube_query()
     # TODO: Add automatically later
    # backend_set = b["backend_set"]
