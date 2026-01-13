@@ -66,9 +66,9 @@ try:
     b = BPF(src_file = "tcveth.c", debug=0)
     service_pod_mapping, services, pods = kube_query()
     # TODO: Add automatically later
-    backend_set = b["backend_set"]
-    backend_set[backend_set.Key(0x0A000132)] = backend_set.Leaf(1)  # 10.0.1.110
-    backend_set[backend_set.Key(0x0A00012A)] = backend_set.Leaf(1)  # 10.0.1.42
+   # backend_set = b["backend_set"]
+   # backend_set[backend_set.Key(0x0A000132)] = backend_set.Leaf(1)  # 10.0.1.110
+   # backend_set[backend_set.Key(0x0A00012A)] = backend_set.Leaf(1)  # 10.0.1.42
 
     print(service_pod_mapping)
     fn = b.load_func("redirect_service", BPF.SCHED_CLS)

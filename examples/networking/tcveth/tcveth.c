@@ -30,7 +30,7 @@ struct ct_val {
 
 BPF_TABLE("lru_hash", struct ct_key, struct ct_val, ct_map, 65536);
 
-BPF_HASH(backend_set, u32, u8);
+//BPF_HASH(backend_set, u32, u8);
 
 static inline int l4_checksum_update(struct __sk_buff *skb, int ip_offset, int l4_offset, u8 protocol, u32 old_ip, u32 new_ip) {
     if (protocol == IPPROTO_TCP) {
@@ -86,7 +86,7 @@ int redirect_service(struct __sk_buff *skb) {
     key.src_port = tcp->dest;
    }
 
-   u8 *is_backend = backend_set.lookup(&src_ip);
+   //u8 *is_backend = backend_set.lookup(&src_ip);
    int ip_offset = 14;
    
 
