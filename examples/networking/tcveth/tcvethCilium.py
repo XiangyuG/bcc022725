@@ -90,6 +90,7 @@ args = parser.parse_args()
 interfaces, src_ip, svcip, new_dst_ip, new_dst_ip2 = apply_config(
     args.config, interfaces, src_ip, svcip, new_dst_ip, new_dst_ip2
 )
+interfaces = list(dict.fromkeys(interfaces))
 
 interfaces = list(dict.fromkeys(interfaces))
 #inject configuration parameters as cflags in bpf program
