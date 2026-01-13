@@ -88,6 +88,7 @@ args = parser.parse_args()
 interfaces, src_ip, svcip, new_dst_ip, new_dst_ip2 = apply_config(
     args.config, interfaces, src_ip, svcip, new_dst_ip, new_dst_ip2
 )
+interfaces = list(dict.fromkeys(interfaces))
 
 #inject configuration parameters as cflags in bpf program
 cflags = [
@@ -99,7 +100,6 @@ cflags = [
 
 # Ensure the interface exists
 try:
-    interfaces = list(dict.fromkeys(interfaces))
     for ifname in interfaces.items():
         ipr.link_lookup(ifname=ifname)[0]
 except IndexError:
