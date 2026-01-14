@@ -3,8 +3,9 @@ import argparse
 import ipaddress
 from pyroute2 import IPRoute
 import pyroute2
+import json
+import os
 
-from kube_query import *
 
 # convert ipv4 to hexadecimal, to pass later to bpf program
 def ipv4_to_hex(ip: str) -> str:
@@ -122,13 +123,11 @@ try:
     here = os.path.dirname(os.path.abspath(__file__))
     c_file = os.path.join(here, "tcveth.c")
     b = BPF(src_file = c_file, cflags=cflags, debug=0)
-    service_pod_mapping, services, pods = kube_query()
     # TODO: Add automatically later
    # backend_set = b["backend_set"]
    # backend_set[backend_set.Key(0x0A000132)] = backend_set.Leaf(1)  # 10.0.1.110
    # backend_set[backend_set.Key(0x0A00012A)] = backend_set.Leaf(1)  # 10.0.1.42
 
-    print(service_pod_mapping)
     for idx in indexes:
         fn = b.load_func("redirect_service", BPF.SCHED_CLS)
         ipr.tc("add-filter", "bpf", idx, ":1", fd=fn.fd, name=fn.name, parent="ffff:fff2", classid=1)
