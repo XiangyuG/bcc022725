@@ -45,8 +45,8 @@ def cleanup():
 
     try:
         # 删除 ingress filters（两个 parent）
-        for ifname in interfaces:
-            ipr.tc("del-filter", "bpf", ifname, ":1", parent="ffff:fff2")
+        for idx in indexes:
+            ipr.tc("del-filter", "bpf", idx, ":1", parent="ffff:fff2")
     except Exception:
         pass
 
@@ -59,13 +59,11 @@ def cleanup():
 
     try:
         # 删除 clsact qdisc
-        for ifname in interfaces:
-            ipr.tc("del", "clsact", ifname)
+        for idx in indexes:
+            ipr.tc("del", "clsact", idx)
     except Exception:
         pass
 
-    if b:
-        b.cleanup()
 
     print("[✓] Cleanup done.")
     
@@ -92,7 +90,7 @@ interfaces, src_ip, svcip, new_dst_ip, new_dst_ip2 = apply_config(
 )
 interfaces = list(dict.fromkeys(interfaces))
 
-interfaces = list(dict.fromkeys(interfaces))
+indexes = []
 #inject configuration parameters as cflags in bpf program
 cflags = [
     f"-DSRC_IP={ipv4_to_hex(src_ip)}",
@@ -103,18 +101,16 @@ cflags = [
 
 # Ensure the interface exists
 try:
-    for idx in interfaces:
-        print(idx)
-        print(ipr.link_lookup(ifname=idx))
-        ipr.link_lookup(ifname=idx)[0]
+    for ifname in interfaces:
+        indexes.append(ipr.link_lookup(ifname=ifname)[0])
 except IndexError:
    print(f"Error: Interface {interfaces} not found. Is it created?")
    exit(1)
 
 # Ensure clsact qdisc is added only once
 try:
-    for ifname in interfaces:
-        ipr.tc("add", "clsact", ifname)
+    for idx in indexes:
+        ipr.tc("add", "clsact", idx)
   
 except Exception as e:
     print(f"clsact qdisc already exists: {e}")
@@ -133,12 +129,12 @@ try:
    # backend_set[backend_set.Key(0x0A00012A)] = backend_set.Leaf(1)  # 10.0.1.42
 
     print(service_pod_mapping)
-    for ifname in interfaces:
+    for idx in indexes:
         fn = b.load_func("redirect_service", BPF.SCHED_CLS)
-        ipr.tc("add-filter", "bpf", ifname, ":1", fd=fn.fd, name=fn.name, parent="ffff:fff2", classid=1)
+        ipr.tc("add-filter", "bpf", idx, ":1", fd=fn.fd, name=fn.name, parent="ffff:fff2", classid=1)
 
 
-    print(f"BPF attached to {interface} - SCHED_CLS: OK")
+    print(f"BPF attached to {interfaces} - SCHED_CLS: OK")
     print("Waiting for packets... Press Ctrl+C to stop.")
     b.trace_print()
 finally:
